@@ -2088,7 +2088,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
     bl: new Float32Array(1024), bavg: new Float32Array(1024), bceil: new Float32Array(1024), bprev: new Float32Array(1024),
     kA: new Int32Array(NL), kB: new Int32Array(NL), binKey: 0, lvl: new Float32Array(NL), es: new Float32Array(NL), lfloor: new Float32Array(NL).fill(0.3),
     env: new Float32Array(NL), act: new Float32Array(NL), live: new Uint8Array(NL), join: new Float32Array(NL), count: 0,
-    fAvg: new Float32Array(NL), hitT: new Float64Array(NL), hitN: new Uint32Array(NL), form: -1, k: 3, a: 1, b: 2, dir: 1, rot: 0 };
+    fAvg: new Float32Array(NL), hitT: new Float64Array(NL), hitN: new Uint32Array(NL), fresh: new Uint8Array(NL), form: -1, k: 3, a: 1, b: 2, dir: 1, rot: 0 };
   const AUDIO = { ctx: null, an: null, data: null, stream: null, src: null, state: "idle" }; // idle, asking, live, none
   const soundNote = document.getElementById("soundNote"); let noteTimer = 0;
   function say(title, sub, live, ms) {
@@ -2153,6 +2153,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
         bl[k] = v > bl[k] ? v : Math.max(v, bl[k] - fall);
       }
       // Layers: how loud each one is, whether it just got hit, and whether it is playing at all
+      EQ.fresh.fill(0);
       for (let j = 0; j < NL; j++) {
         // e: the layer's loudness, taken from its three loudest pitches, because a voice or a melody fills only a few
         // pitches of a wide range and an average over the whole range would hide it
@@ -2173,7 +2174,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
         // and a kick rises across most of its range at once, where a bass note in the same range lifts only one or two pitches
         if (EQ.on > 0.3 && f > EQ.fAvg[j] * 1.8 + HIT_MIN[j] && (j !== 0 || wide >= 0.75) && e > EQ.lfloor[j] + 0.1 && now - EQ.hitT[j] > HIT_GAP[j]) {
           const strength = Math.min(1, 0.45 + (f - EQ.fAvg[j]) / (EQ.fAvg[j] * 2 + HIT_MIN[j] * 3));
-          EQ.env[j] = Math.max(EQ.env[j], strength * EQ.on); EQ.hitT[j] = now; EQ.hitN[j]++;
+          EQ.env[j] = Math.max(EQ.env[j], strength * EQ.on); EQ.hitT[j] = now; EQ.hitN[j]++; EQ.fresh[j] = 1;
           if (j === 0) { EQ.kCandT = now; EQ.kPeak = e; }
           if (j === 4) { EQ.ringT = now; EQ.rings.push({ t0: now, s: strength, r: 0 }); if (EQ.rings.length > 3) EQ.rings.shift(); } // a snare sends a ring out
         }
@@ -2203,7 +2204,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
       EQ.vol += (loud - EQ.vol) * (1 - Math.exp(-dt / 130));
       if (!EQ.gate) EQ.floor = EQ.vol < (EQ.floor || 0) ? EQ.vol : (EQ.floor || 0) + (EQ.vol - (EQ.floor || 0)) * (1 - Math.exp(-dt / 10000));
       if (EQ.vol > Math.max(0.14, (EQ.floor || 0) + 0.06)) { EQ.gate = 1; EQ.gateT = now; } else if (EQ.vol < Math.max(0.08, (EQ.floor || 0) + 0.02) && now - (EQ.gateT || 0) > 2500) EQ.gate = 0;
-    } else { EQ.gate = 0; for (let j = 0; j < NL; j++) { EQ.env[j] *= 0.9; EQ.act[j] *= 0.95; EQ.live[j] = 0; } EQ.count = 0; }
+    } else { EQ.gate = 0; EQ.fresh.fill(0); for (let j = 0; j < NL; j++) { EQ.env[j] *= 0.9; EQ.act[j] *= 0.95; EQ.live[j] = 0; } EQ.count = 0; }
     EQ.on += (EQ.gate - EQ.on) * (1 - Math.exp(-dt / 270));
     // The screensaver figures read the sound as bands spaced the way pitch is heard
     let en = 0;
@@ -2611,6 +2612,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
     const pullHome = calm > 0.35 ? (calm - 0.35) / 0.65 : 0; // how strongly calmed sand is drawn back to the shape
     if (AUDIO.state === "live" || saver) eqLevels(now);
     const snd = AUDIO.state === "live" && !saver && !mode && !reduce ? EQ.on : 0; // how much the shape on screen moves with sound
+    const sndAll = AUDIO.state === "live" && !saver && !reduce ? EQ.on : 0;     // the same for loose sand, in every state
     if (!saver && !mode && !drag.on && !reduce && now - lastInput > SAVER_IDLE && !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || "")) saverOn(now);
     if (saver && now > saverNext) { for (const p of P) { const a = Math.random() * TAU, sp = 6 + Math.random() * 12; p.vx += Math.cos(a) * sp; p.vy += Math.sin(a) * sp; } eqPick(now); }
     // Holding still escalates: four crop circles, then sand rains over the whole screen,
@@ -2619,7 +2621,10 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
       if (!mode) {
         // Burst only once every grain caught in the grip has reached the centre.
         // Until then the grip keeps pulling. A safety limit stops it waiting forever.
-        const ready = pileCount >= 40 && pileOut <= Math.max(3, pileCount * 0.01);
+        // Music makes the pile throb, which keeps pushing a few grains out for a moment, so "all in" is judged over the
+        // last half second rather than on this one frame.
+        if (pileCount >= 40 && pileOut <= Math.max(3, pileCount * 0.01)) drag.inT = now;
+        const ready = now - (drag.inT || -1e9) < 450;
         const sinceLast = now - (drag.cropAt || drag.t0);
         if (now - drag.t0 > 3200 && sinceLast > 1800 && (ready || sinceLast > 12000)) {
           drag.bursts = (drag.bursts || 0) + 1;
@@ -2647,6 +2652,8 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
     const done = pulling ? (drag.bursts || 0) : 0;
     // the pile beats like a heart, faster and harder as the burst gets close
     const rate = 1.2 + 5 * readiness, beatPhase = (now / 1000 * rate) % 1, beatK = Math.pow(Math.max(0, Math.sin(beatPhase * TAU)), 10) * (0.5 + 2.6 * readiness);
+    // with music playing, every kick drum adds a beat to the pile's heart
+    const beatS = beatK + (pulling && sndAll && EQ.fresh[0] ? EQ.env[0] * (1.5 + 2 * readiness) : 0); // one short beat per kick, as strong as its own heartbeat
     const glowing = fine && mouse.in && !drag.on;
     const censusOn = pulling; let cCount = 0, cOut = 0;
     const core = 16 + Math.sqrt(Math.max(1, pileCount)) * 0.9;
@@ -2702,10 +2709,47 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
       // play, the more of the sand comes alive. Each layer moves in its own way:
       // kick punches out, bass breathes, chords swirl, voice lifts, snare jumps (and sends a ring), hi-hats flick.
       let pulseK = 0; p.pu = 0;
+      // Loose sand (scattered by the brush, gathered in the grip, raining or running wild) listens the same way, each
+      // layer with its own move. It is shifted by how much its level changed since the last frame, so once the sound
+      // falls back the grain is back where it was: the music never sweeps the sand away. Sand lying on the ground
+      // while it rains is different: there it hops, like sand on a speaker.
+      const grounded = mode === "rain" && p.y >= p.floor - 1;
+      if (sndAll && (p.free || mode) && !p.crop && !grounded) {
+        const j = i % NL, act = EQ.act[j];
+        if (p.bk !== EQ.binKey) { p.bk = EQ.binKey; const w = EQ.kB[j] - EQ.kA[j]; p.bin = EQ.kA[j] + (((i * 2654435761) >>> 0) % w); }
+        const g = EQ.bl[p.bin] * act, lev = j === 0 || j === 4 ? EQ.env[j] : j === 5 ? Math.max(EQ.env[5] * 0.6, g) : g;
+        let dl = lev - (p.sg || 0); p.sg = lev;
+        if (dl) {
+          // a pile being gathered is not shifted: its own heartbeat follows the kick instead (see beatK), so it still fills up and bursts
+          if (pulling && p.carry) dl = 0;
+          // the middle it moves from: the pile while it is being gathered, the screen when it runs wild, the drawing otherwise
+          const mx = pulling && p.carry ? drag.lx : mode ? W / 2 : cx, my = pulling && p.carry ? drag.ly : mode ? H / 2 : cy;
+          const rx = p.x - mx, ry = p.y - my, dist = Math.hypot(rx, ry) || 1, reach = Math.min(dist, 420) / dist;
+          if (j === 0) { p.x += rx * reach * dl * 0.16; p.y += ry * reach * dl * 0.16; }
+          else if (j === 1) { p.x += rx * reach * dl * 0.11; p.y += ry * reach * dl * 0.11; }
+          else if (j === 2) { p.x += -ry / dist * dl * 34 * EQ.dir; p.y += rx / dist * dl * 34 * EQ.dir; }
+          else if (j === 3) { p.y -= dl * 34; p.x += Math.sin(p.ph * 5) * dl * 10; }
+          else if (j === 4) { p.x += rx * reach * dl * 0.11; p.y += ry * reach * dl * 0.11; }
+          else { const a = p.ph * 7 + EQ.hitN[5] * 2.4; p.x += Math.cos(a) * dl * 16; p.y += Math.sin(a) * dl * 16; }
+        }
+        p.pu = j === 0 ? EQ.env[0] * (lite ? 1.4 : 1.9) : lev * 0.9;
+      } else p.sg = 0;
+      if (sndAll && grounded) {
+        const j = i % NL;
+        if (EQ.fresh[0]) p.vy -= EQ.env[0] * (2.5 + 4.5 * ((i * 37) % 19) / 19); // every kick throws the dune up a little
+        if (j === 4 && EQ.fresh[4]) p.vy -= EQ.env[4] * 5;
+        if (j === 5 && EQ.fresh[5]) { p.vy -= EQ.env[5] * 2; p.vx += Math.cos(p.ph * 7 + EQ.hitN[5]) * 1.5; }
+        if (j >= 1 && j <= 3 && EQ.act[j] > 0.3) {
+          if (p.bk !== EQ.binKey) { p.bk = EQ.binKey; const w = EQ.kB[j] - EQ.kA[j]; p.bin = EQ.kA[j] + (((i * 2654435761) >>> 0) % w); }
+          const g = EQ.bl[p.bin] * EQ.act[j]; if (g > 0.3 && Math.random() < 0.08) p.vy -= g * 2.4; // held notes make it simmer
+        }
+        p.pu = EQ.env[0] * 1.2;
+      }
+      if (sndAll && p.crop) p.pu = EQ.env[0] * (lite ? 1.4 : 1.9);
       if (snd) {
         const kick = EQ.env[0];
         pulseK = kick * KICK_AMP;
-        if (p.free && !p.crop) { const dk = EQ.kickDk * KICK_AMP; p.x += (p.x - cx) * dk; p.y += (p.y - cy) * dk; } // loose sand punches where it lies
+        if (p.free && !p.crop) { /* loose sand: handled above */ }
         else {
           const j = i % NL, act = EQ.act[j];
           const rx = tx - cx, ry = ty - cy, dist = Math.hypot(rx, ry) || 1, near = Math.min(1, dist / (0.2 * s));
@@ -2823,7 +2867,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
             const d = Math.sqrt(d2) || 1;
             if (d < core * 1.8) {
               // heartbeat and a shiver that grows as the burst gets close
-              p.vx -= dx / d * beatK; p.vy -= dy / d * beatK;
+              p.vx -= dx / d * beatS; p.vy -= dy / d * beatS;
               const sh = readiness * readiness * 1.4; p.vx += (Math.random() - 0.5) * sh; p.vy += (Math.random() - 0.5) * sh;
             }
             // one small clump of sand orbits the pile for every burst so far
