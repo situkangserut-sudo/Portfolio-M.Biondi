@@ -2069,13 +2069,26 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
      changing to another at random now and then. Any input brings the page back. */
   let saver = false, saverNext = 0, saverEndT = 0, eqT = 0, eqX0 = 0, eqWW = 1, eqCX = 0, eqCY = 0, eqR = 1, eqGX = 0, eqGY = 0;
   const SAVER_IDLE = 45000;
-  // How far sound moves the drawing, as a share of its size: the round spectrum, a kick, a hi-hat
-  const SPEC_AMP = 0.16, KICK_AMP = 0.13, HAT_AMP = 0.04;
-  // Hit detection for kick, snare and hi-hat: least rise that counts, shortest gap between two hits (ms), how long a hit lasts (ms)
-  const HIT_MIN = [0.045, 0.03, 0.03], HIT_GAP = [170, 150, 80], HIT_DECAY = [140, 170, 70];
+  /* Six layers, one for each kind of instrument, told apart by pitch range. A microphone hears one mixed sound, so
+     this is an estimate by range, not real instrument recognition. hit: the layer is judged by its hits (drums);
+     otherwise by its steady level (notes that are held). */
+  const LAYERS = [
+    { f0: 35, f1: 110, hit: true },     // kick
+    { f0: 45, f1: 160, hit: false },    // bass
+    { f0: 160, f1: 800, hit: false },   // chords, guitar, piano
+    { f0: 800, f1: 2600, hit: false },  // voice and melody
+    { f0: 2600, f1: 6000, hit: true },  // snare, claps
+    { f0: 6000, f1: 15000, hit: true }  // hi-hats, cymbals
+  ];
+  const NL = LAYERS.length, KICK_AMP = 0.13;
+  // Hit detection per layer: least rise that counts, shortest gap between two hits (ms), how long a hit lasts (ms)
+  const HIT_MIN = [0.045, 0.035, 0.03, 0.03, 0.03, 0.03], HIT_GAP = [170, 150, 150, 120, 150, 80], HIT_DECAY = [140, 200, 220, 200, 170, 70];
   const RING_W = 70, RING_SPEED = 0.95; // a beat's ring: how thick it is in pixels, and how many pixels it travels each millisecond
-  const EQ = { n: 32, lv: new Float32Array(64), raw: new Float32Array(64), peak: 0.3, vol: 0, gate: 0, on: 0, band: new Float32Array(3), was: new Float32Array(3), dk: new Float32Array(3), rings: [], ringT: 0,
-    avg: new Float32Array(64), ceil: new Float32Array(64), prev: new Float32Array(64), fAvg: new Float32Array(3), hitT: new Float64Array(3), hitN: new Uint32Array(3), form: -1, k: 3, a: 1, b: 2, dir: 1, rot: 0 };
+  const EQ = { n: 32, lv: new Float32Array(64), raw: new Float32Array(64), peak: 0.3, vol: 0, gate: 0, on: 0, kickWas: 0, kickDk: 0, kCandT: 0, kPeak: 0, kConf: -1e9, rings: [], ringT: 0,
+    bl: new Float32Array(1024), bavg: new Float32Array(1024), bceil: new Float32Array(1024), bprev: new Float32Array(1024),
+    kA: new Int32Array(NL), kB: new Int32Array(NL), binKey: 0, lvl: new Float32Array(NL), es: new Float32Array(NL), lfloor: new Float32Array(NL).fill(0.3),
+    env: new Float32Array(NL), act: new Float32Array(NL), live: new Uint8Array(NL), join: new Float32Array(NL), count: 0,
+    fAvg: new Float32Array(NL), hitT: new Float64Array(NL), hitN: new Uint32Array(NL), form: -1, k: 3, a: 1, b: 2, dir: 1, rot: 0 };
   const AUDIO = { ctx: null, an: null, data: null, stream: null, src: null, state: "idle" }; // idle, asking, live, none
   const soundNote = document.getElementById("soundNote"); let noteTimer = 0;
   function say(title, sub, live, ms) {
@@ -2116,55 +2129,93 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
     AUDIO.stream = AUDIO.src = AUDIO.an = null; if (AUDIO.state !== "none") AUDIO.state = "idle";
   }
   function eqLevels(now) {
-    const n = EQ.n = mobile ? 16 : 32, raw = EQ.raw, dt = Math.min(60, Math.max(4, now - (EQ.t || now - 16))); EQ.t = now;
+    const n = EQ.n = mobile ? 16 : 32, dt = Math.min(60, Math.max(4, now - (EQ.t || now - 16))); EQ.t = now;
     eqWW = mobile ? W - 32 : Math.min(W - 64, 1320); eqX0 = (W - eqWW) / 2; eqCX = W / 2; eqCY = H / 2; eqR = Math.min(W, H) * 0.36;
-    raw.fill(0, 0, n);
-    const flux = [0, 0, 0], g1 = Math.round(n * 0.2), g2 = Math.round(n * 0.71); // kick up to about 150 Hz, snare and voice to about 2,500 Hz, hi-hat above
+    const fall = dt * 0.003, bl = EQ.bl; let loud = 0;
     if (AUDIO.state === "live") {
-      AUDIO.an.getByteFrequencyData(AUDIO.data);
-      const dta = AUDIO.data, hz = AUDIO.ctx.sampleRate / AUDIO.an.fftSize, f0 = 50, f1 = 12000; let loud = 0;
-      const avgK = 1 - Math.exp(-dt / 1500);
-      for (let i = 0; i < n; i++) { // bands are spaced the way pitch is heard: each one covers the same musical width
-        const a = Math.max(1, Math.floor(f0 * Math.pow(f1 / f0, i / n) / hz)), b = Math.max(a + 1, Math.ceil(f0 * Math.pow(f1 / f0, (i + 1) / n) / hz));
-        let sum = 0; for (let j = a; j < b && j < dta.length; j++) sum += dta[j];
-        const plain = sum / (b - a) / 255; if (plain > loud) loud = plain;
-        // a hit is a sudden rise in a band, whatever its loudness
-        const rise = plain - EQ.prev[i]; EQ.prev[i] = plain;
-        if (rise > 0) flux[i < g1 ? 0 : i < g2 ? 1 : 2] += rise;
-        // Each band against its own usual level: the slow average is what has been playing for the last second or two,
-        // and the ceiling is the loudest it has been lately. Steady sound sits near the average and barely moves the
-        // sand; a hit jumps toward the ceiling and moves it a lot.
-        EQ.avg[i] += (plain - EQ.avg[i]) * avgK;
-        EQ.ceil[i] = Math.max(plain, EQ.ceil[i] - dt * 0.00006);
-        const floorL = EQ.avg[i] * 0.9, span = Math.max(0.07, EQ.ceil[i] - floorL);
-        const dyn = Math.min(1, Math.max(0, (plain - floorL) / span)), body = Math.min(1, Math.max(0, (plain - 0.25) / 0.55));
-        raw[i] = 0.8 * dyn * dyn + 0.2 * body; // squared, so small changes stay small and hits stand out
+      const an = AUDIO.an, dta = AUDIO.data, hz = AUDIO.ctx.sampleRate / an.fftSize, nb = Math.min(1024, dta.length);
+      if (EQ.binKey !== hz) { // which frequency bins belong to which layer, worked out once
+        EQ.binKey = hz;
+        LAYERS.forEach((L, j) => { EQ.kA[j] = Math.max(1, Math.round(L.f0 / hz)); EQ.kB[j] = Math.max(EQ.kA[j] + 1, Math.min(nb, Math.round(L.f1 / hz))); });
       }
-      flux[0] /= g1; flux[1] /= (g2 - g1); flux[2] /= (n - g2);
+      an.getByteFrequencyData(dta);
+      const avgK = 1 - Math.exp(-dt / 1500), kMax = EQ.kB[NL - 1];
+      // Every frequency bin is judged against its own usual level: the slow average is what has been playing for the
+      // last second or two, and the ceiling is the loudest it has been lately. Steady sound barely moves the sand; a
+      // change jumps toward the ceiling and moves it a lot. Levels jump up at once and fall back with gravity.
+      for (let k = 1; k < kMax; k++) {
+        const plain = dta[k] / 255; if (plain > loud) loud = plain;
+        EQ.bavg[k] += (plain - EQ.bavg[k]) * avgK;
+        EQ.bceil[k] = Math.max(plain, EQ.bceil[k] - dt * 0.00006);
+        const floorL = EQ.bavg[k] * 0.9, span = Math.max(0.07, EQ.bceil[k] - floorL);
+        const dyn = Math.min(1, Math.max(0, (plain - floorL) / span)), body = Math.min(1, Math.max(0, (plain - 0.25) / 0.55));
+        const v = (0.8 * dyn * dyn + 0.2 * body) * EQ.on;
+        bl[k] = v > bl[k] ? v : Math.max(v, bl[k] - fall);
+      }
+      // Layers: how loud each one is, whether it just got hit, and whether it is playing at all
+      for (let j = 0; j < NL; j++) {
+        // e: the layer's loudness, taken from its three loudest pitches, because a voice or a melody fills only a few
+        // pitches of a wide range and an average over the whole range would hide it
+        const kA = EQ.kA[j], kB = EQ.kB[j]; let t1 = 0, t2 = 0, t3 = 0, f = 0, l = 0, wide = 0;
+        for (let k = kA; k < kB; k++) {
+          const plain = dta[k] / 255, r = plain - EQ.bprev[k]; if (r > 0) f += r; if (r > 0.06) wide++; l += bl[k];
+          if (plain > t1) { t3 = t2; t2 = t1; t1 = plain; } else if (plain > t2) { t3 = t2; t2 = plain; } else if (plain > t3) t3 = plain;
+        }
+        const e = (t1 + t2 + t3) / 3; f /= kB - kA; wide /= kB - kA; EQ.lvl[j] = l / (kB - kA);
+        EQ.es[j] += (e - EQ.es[j]) * (1 - Math.exp(-dt / 200));
+        // The layer's own quiet level. It is learned only while the room is quiet; during music it can only drop, so an
+        // instrument that never stops (a held chord) is not mistaken for quiet.
+        if (!EQ.gate) EQ.lfloor[j] += (EQ.es[j] - EQ.lfloor[j]) * (1 - Math.exp(-dt / 2000));
+        else if (EQ.es[j] < EQ.lfloor[j]) EQ.lfloor[j] = EQ.es[j];
+        const was = EQ.env[j];
+        EQ.env[j] *= Math.exp(-dt / HIT_DECAY[j]);
+        // A hit must be loud enough to stand above the layer's quiet level (small flickers in a quiet range are not hits),
+        // and a kick rises across most of its range at once, where a bass note in the same range lifts only one or two pitches
+        if (EQ.on > 0.3 && f > EQ.fAvg[j] * 1.8 + HIT_MIN[j] && (j !== 0 || wide >= 0.75) && e > EQ.lfloor[j] + 0.1 && now - EQ.hitT[j] > HIT_GAP[j]) {
+          const strength = Math.min(1, 0.45 + (f - EQ.fAvg[j]) / (EQ.fAvg[j] * 2 + HIT_MIN[j] * 3));
+          EQ.env[j] = Math.max(EQ.env[j], strength * EQ.on); EQ.hitT[j] = now; EQ.hitN[j]++;
+          if (j === 0) { EQ.kCandT = now; EQ.kPeak = e; }
+          if (j === 4) { EQ.ringT = now; EQ.rings.push({ t0: now, s: strength, r: 0 }); if (EQ.rings.length > 3) EQ.rings.shift(); } // a snare sends a ring out
+        }
+        EQ.fAvg[j] += (f - EQ.fAvg[j]) * (1 - Math.exp(-dt / 350));
+        if (j === 0) {
+          EQ.kickDk = EQ.env[0] - was;
+          // A kick dies away fast; a bass note in the same range is held. So a low hit only counts as a kick once its
+          // loudness has dropped clearly within about a tenth of a second.
+          if (EQ.kCandT) {
+            if (now - EQ.kCandT < 60) EQ.kPeak = Math.max(EQ.kPeak, e);
+            else if (e < EQ.kPeak - 0.07) { EQ.kConf = now; EQ.kCandT = 0; }
+            else if (now - EQ.kCandT > 160) EQ.kCandT = 0;
+          }
+        }
+        // Playing? Drums count while they keep hitting; held notes count while they stay clearly above the layer's quiet level.
+        const playing = EQ.on > 0.3 && (LAYERS[j].hit ? now - (j === 0 ? EQ.kConf : EQ.hitT[j]) < 1400 : EQ.es[j] > EQ.lfloor[j] + 0.08);
+        if (playing && !EQ.live[j]) EQ.join[j] = 1; // a layer that comes in hops once, so a new instrument can be seen arriving
+        EQ.live[j] = playing ? 1 : 0;
+        EQ.act[j] += ((playing ? 1 : 0) - EQ.act[j]) * (1 - Math.exp(-dt / (playing ? 150 : 900)));
+        EQ.join[j] *= Math.exp(-dt / 450);
+      }
+      for (let k = 1; k < kMax; k++) EQ.bprev[k] = dta[k] / 255;
+      EQ.count = EQ.live.reduce((a, v) => a + v, 0);
       // Is there sound at all? A quiet room must leave the sand alone. The room's own steady noise (a fan, traffic) is
       // learned while nothing is playing, and sound has to rise clearly above it. Once open it stays open through
       // quiet passages, so the motion does not cut in and out.
       EQ.vol += (loud - EQ.vol) * (1 - Math.exp(-dt / 130));
       if (!EQ.gate) EQ.floor = EQ.vol < (EQ.floor || 0) ? EQ.vol : (EQ.floor || 0) + (EQ.vol - (EQ.floor || 0)) * (1 - Math.exp(-dt / 10000));
       if (EQ.vol > Math.max(0.14, (EQ.floor || 0) + 0.06)) { EQ.gate = 1; EQ.gateT = now; } else if (EQ.vol < Math.max(0.08, (EQ.floor || 0) + 0.02) && now - (EQ.gateT || 0) > 2500) EQ.gate = 0;
-    } else EQ.gate = 0;
+    } else { EQ.gate = 0; for (let j = 0; j < NL; j++) { EQ.env[j] *= 0.9; EQ.act[j] *= 0.95; EQ.live[j] = 0; } EQ.count = 0; }
     EQ.on += (EQ.gate - EQ.on) * (1 - Math.exp(-dt / 270));
-    // Like a player's bars: a level jumps up at once and falls back with gravity, the full height in about a third of a second
-    let en = 0; const fall = dt * 0.003;
-    for (let i = 0; i < n; i++) { const v = raw[i] * EQ.on; EQ.lv[i] = v > EQ.lv[i] ? v : Math.max(v, EQ.lv[i] - fall); en += EQ.lv[i]; }
-    EQ.rot += (0.003 + 0.03 * en / n) * EQ.dir; // figures turn slowly on their own, faster when it is loud
-    // Hits. Each group (kick, snare, hi-hat) is compared with its own recent average rise; a clear jump above it is a hit.
-    for (let j = 0; j < 3; j++) {
-      const was = EQ.band[j], f = flux[j];
-      EQ.band[j] *= Math.exp(-dt / HIT_DECAY[j]); // a hit fades quickly
-      if (EQ.on > 0.3 && f > EQ.fAvg[j] * 1.8 + HIT_MIN[j] && now - EQ.hitT[j] > HIT_GAP[j]) {
-        const strength = Math.min(1, 0.45 + (f - EQ.fAvg[j]) / (EQ.fAvg[j] * 2 + HIT_MIN[j] * 3));
-        EQ.band[j] = Math.max(EQ.band[j], strength * EQ.on); EQ.hitT[j] = now; EQ.hitN[j]++;
-        if (j === 1) { EQ.ringT = now; EQ.rings.push({ t0: now, s: strength, r: 0 }); if (EQ.rings.length > 3) EQ.rings.shift(); } // a snare sends a ring out
+    // The screensaver figures read the sound as bands spaced the way pitch is heard
+    let en = 0;
+    if (EQ.binKey) {
+      const hz = EQ.binKey;
+      for (let i = 0; i < n; i++) {
+        const a = Math.max(1, Math.floor(50 * Math.pow(240, i / n) / hz)), b = Math.max(a + 1, Math.ceil(50 * Math.pow(240, (i + 1) / n) / hz));
+        let m = 0; for (let k = a; k < b && k < 1024; k++) m += bl[k];
+        EQ.lv[i] = Math.max(0.035, m / (b - a)); en += EQ.lv[i];
       }
-      EQ.fAvg[j] += (f - EQ.fAvg[j]) * (1 - Math.exp(-dt / 350));
-      EQ.dk[j] = EQ.band[j] - was; // how much it grew or shrank since the last frame
-    }
+    } else for (let i = 0; i < n; i++) { EQ.lv[i] = Math.max(0.035, EQ.lv[i] - fall); en += EQ.lv[i]; }
+    EQ.rot += (0.003 + 0.03 * en / n) * EQ.dir; // figures turn slowly on their own, faster when it is loud
     const far = Math.hypot(W, H);
     for (const g of EQ.rings) g.r = (now - g.t0) * RING_SPEED;
     if (EQ.rings.length && EQ.rings[0].r > far) EQ.rings.shift();
@@ -2537,7 +2588,7 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
     // Left alone for a few seconds, the shape starts to become one of its variants, gets about a third
     // of the way, and slides back. Only a click actually changes it.
     // (not on the flowing hero: it is already alive, and a half-morph there just looks broken)
-    if (!reduce && !mode && !drag.on && VARIANTS[current] && !(current === 0 && variantIdx[0] === 0) && !tease.on && now - lastInput > 3000 && now - tease.end > 3500) {
+    if (!reduce && !mode && !drag.on && VARIANTS[current] && !(current === 0 && variantIdx[0] === 0) && !tease.on && EQ.on < 0.05 && now - lastInput > 3000 && now - tease.end > 3500) { // while music plays, the music is what moves it
       const pool = VARIANTS[current]; seed = 1 + ((Math.random() * 2147483000) | 0);
       tease.pts = pool[(Math.random() * pool.length) | 0](N); tease.on = true; tease.t0 = now; tease.sec = current;
     }
@@ -2646,27 +2697,30 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
         }
         if (arrived && !p.free && !mode && now > p.wake) { p.x = tx; p.y = ty; p.vx = 0; p.vy = 0; } // back at the source
       }
-      // Sound. The drawing keeps its shape and becomes a round spectrum: where a grain sits around the middle decides
-      // which notes move it (low notes at the bottom, high notes at the top, the same on both sides), and each part
-      // pushes out with its own notes. On top of that, a kick punches the whole drawing out, a snare sends a ring
-      // through it, and a hi-hat flicks one grain in three.
+      // Sound. Every grain belongs to one of the six layers and listens to its own narrow pitch inside it, so
+      // neighbouring grains move differently. A layer that is not playing stays on the drawing; the more instruments
+      // play, the more of the sand comes alive. Each layer moves in its own way:
+      // kick punches out, bass breathes, chords swirl, voice lifts, snare jumps (and sends a ring), hi-hats flick.
       let pulseK = 0; p.pu = 0;
       if (snd) {
-        const kick = EQ.band[0];
+        const kick = EQ.env[0];
         pulseK = kick * KICK_AMP;
-        if (p.free && !p.crop) { const dk = EQ.dk[0] * KICK_AMP; p.x += (p.x - cx) * dk; p.y += (p.y - cy) * dk; } // loose sand punches where it lies
+        if (p.free && !p.crop) { const dk = EQ.kickDk * KICK_AMP; p.x += (p.x - cx) * dk; p.y += (p.y - cy) * dk; } // loose sand punches where it lies
         else {
-          const rx = tx - cx, ry = ty - cy, dist = Math.hypot(rx, ry) || 1;
-          let d = Math.abs(Math.atan2(ry, rx) - Math.PI / 2); if (d > Math.PI) d = TAU - d;
-          const fb = d / Math.PI * (EQ.n - 1), i0 = fb | 0, wf = fb - i0, L = EQ.lv[i0] * (1 - wf) + EQ.lv[Math.min(EQ.n - 1, i0 + 1)] * wf;
-          const near = Math.min(1, dist / (0.2 * s)), tex = 0.6 + 0.4 * ((i * 37) % 19) / 19;
-          const push = (L * SPEC_AMP * s * tex) * near / dist + kick * KICK_AMP;
-          let ox = rx * push, oy = ry * push;
-          if (i % 3 === 2 && EQ.band[2] > 0.02) { const a = p.ph * 7 + EQ.hitN[2] * 2.4, r = EQ.band[2] * HAT_AMP * s; ox += Math.cos(a) * r; oy += Math.sin(a) * r; }
-          if (EQ.rings.length) {
-            for (const g of EQ.rings) { const df = Math.abs(dist - g.r); if (df < RING_W) { const k = g.s * (1 - df / RING_W) * s * 0.08 / dist; ox += rx * k; oy += ry * k; } }
+          const j = i % NL, act = EQ.act[j];
+          const rx = tx - cx, ry = ty - cy, dist = Math.hypot(rx, ry) || 1, near = Math.min(1, dist / (0.2 * s));
+          let ox = 0, oy = 0;
+          if (act > 0.02 || EQ.rings.length) {
+            if (p.bk !== EQ.binKey) { p.bk = EQ.binKey; const w = EQ.kB[j] - EQ.kA[j]; p.bin = EQ.kA[j] + (((i * 2654435761) >>> 0) % w); }
+            const g = EQ.bl[p.bin] * act, hop = EQ.join[j];
+            if (j === 0) { const k = (kick * KICK_AMP + g * 0.05 + hop * 0.05) * near; ox = rx * k; oy = ry * k; p.pu = kick * (lite ? 1.4 : 1.9); }
+            else if (j === 1) { const k = (g * 0.1 + hop * 0.05) * near; ox = rx * k; oy = ry * k; p.pu = g * 1.1; }
+            else if (j === 2) { const sw = (g * 0.075 + hop * 0.03) * s * near / dist; ox = -ry * sw * EQ.dir; oy = rx * sw * EQ.dir; p.pu = g * 0.8; }
+            else if (j === 3) { oy = -(g * 0.09 + hop * 0.05) * s; ox = Math.sin(p.ph * 5 + t * 4) * g * 0.025 * s; p.pu = g * 0.8; }
+            else if (j === 4) { const k = (EQ.env[4] * 0.09 + g * 0.03 + hop * 0.05) * near; ox = rx * k; oy = ry * k; p.pu = EQ.env[4] * 1.2; }
+            else { const a = p.ph * 7 + EQ.hitN[5] * 2.4, r = (EQ.env[5] * 0.6 + g * 0.5 + hop) * 0.045 * s; ox = Math.cos(a) * r; oy = Math.sin(a) * r; p.pu = g * 0.6; }
+            for (const r of EQ.rings) { const df = Math.abs(dist - r.r); if (df < RING_W) { const k = r.s * (1 - df / RING_W) * s * 0.07 / dist; ox += rx * k; oy += ry * k; } }
           }
-          p.pu = kick * (lite ? 1.4 : 1.9) + L * 0.9; // grains swell on the kick and with their own notes
           if (ox || oy) {
             tx += ox; ty += oy;
             if (!p.crop && now > p.wake) { p.vx += (tx - p.x) * 0.12; p.vy += (ty - p.y) * 0.12; p.vx *= 0.86; p.vy *= 0.86; } // a firm, damped spring, so it keeps up with the music without ringing
