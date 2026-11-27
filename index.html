@@ -477,7 +477,7 @@ body.saver .brush, body.saver .sound-note { opacity: 0; pointer-events: none; tr
       </div>
       <ol class="caps">
         <li><a class="cap" href="#sign" data-to="1"><b>New products from zero</b><span>VIDA Sign, VIDA's first signing product. Designed end to end, now live.</span><i>VIDA Sign &rarr;</i></a></li>
-        <li><a class="cap" href="#liveness" data-to="2"><b>Research that changes the plan</b><span>~90% of users skipped the liveness tutorial in my tests. The guidance moved into the camera.</span><i>Liveness &rarr;</i></a></li>
+        <li><a class="cap" href="#liveness" data-to="2"><b>Research that changes the plan</b><span>9 of 10 internal testers got stuck on active liveness. After my fix, everyone in the follow-up test finished.</span><i>Liveness &rarr;</i></a></li>
         <li><a class="cap" href="#system" data-to="5"><b>Systems other teams build on</b><span>A Web SDK of 59+ screens made from 12 reusable screen types, on tokens that meet the Web Content Accessibility Guidelines (WCAG).</span><i>Design system &rarr;</i></a></li>
         <li><a class="cap" href="#rbac" data-to="3"><b>Complicated logic people can use</b><span>Role-Based Access Control (RBAC), multi-level approvals and signing order.</span><i>Access &rarr;</i></a></li>
         <li><a class="cap" href="#billing" data-to="4"><b>Design that helps sell</b><span>Repositioned VIDA's website around use cases. Built prototypes in each client's branding for sales pitches.</span><i>Billing &rarr;</i></a></li>
@@ -501,8 +501,8 @@ body.saver .brush, body.saver .sound-note { opacity: 0; pointer-events: none; tr
     <div class="wrap">
       <article class="card">
         <span class="k mono"><span>Identity verification</span><span>Tested</span></span>
-        <div class="big">~90%</div>
-        <p>of users skipped the liveness tutorial in my usability tests. So the guidance moved into the camera.</p>
+        <div class="big">9 of 10</div>
+        <p>internal testers got stuck on active liveness and hit the time-out. A tutorial and slower feedback got everyone through.</p>
         <button class="open" data-case="liveness">Read the case <span>&rarr;</span></button>
       </article>
     </div>
@@ -857,14 +857,14 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
         <div class="pcopy">
           <div>
             <div class="ptag">Identity verification</div>
-            <h1>~90% skipped the tutorial</h1>
-            <p class="sum">I tested the liveness step in usability sessions. Almost nobody read the tutorial, and people got stuck at the camera. So the guidance moved into the camera.</p>
+            <h1>9 of 10 got stuck</h1>
+            <p class="sum">Active liveness was losing far more users than passive liveness. I tested it with 10 internal users, found two causes, and fixed both.</p>
           </div>
           <dl class="meta">
-            <div><dt>Role</dt><dd>Ran the testing, redesigned the guidance</dd></div>
+            <div><dt>Role</dt><dd>Researched, tested, redesigned the step</dd></div>
             <div><dt>Stream</dt><dd>Verify and Authentication</dd></div>
             <div><dt>Flow</dt><dd>electronic Know Your Customer (eKYC)</dd></div>
-            <div><dt>Status</dt><dd>Change shipped</dd></div>
+            <div><dt>Status</dt><dd>In production</dd></div>
           </dl>
         </div>
         <div class="art"><svg viewBox="0 0 400 400" role="img" aria-label="A person's face inside a camera frame being scanned">
@@ -905,55 +905,55 @@ footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; g
       <section class="sec read-w">
         <div class="eyebrow">Context</div>
         <h2>The step where you prove you're there</h2>
-        <p>Liveness verification is where a user proves they are a real person, in front of the camera, by following prompts on screen. In the eKYC flow it comes after consent and ID capture, as the selfie step.</p>
+        <p>Liveness verification is where a user proves they are a real person, in front of the camera, by following prompts on screen. In the eKYC flow it comes after consent and ID capture, as the selfie step. Active liveness asks for a movement, like turning your head. Passive liveness only needs you to hold still.</p>
       </section>
       <section class="sec read-w">
         <div class="eyebrow">Question</div>
-        <h2>Was the tutorial doing its job?</h2>
-        <p>A tutorial is easy to design and easy to skip. Before changing anything, I wanted to know whether people read it or tapped straight through to the task. So I set up usability testing on the liveness step.</p>
+        <h2>Why does active liveness lose people?</h2>
+        <p>I heard that active liveness lost far more users than passive liveness. There was no drop-off figure to start from, so I went to the people doing it: I interviewed 10 internal users and watched each of them try the step.</p>
       </section>
       <section class="sec">
         <div class="read-w" style="display:grid; gap:14px;">
           <div class="eyebrow">Finding</div>
-          <h2>Skipped, then stuck</h2>
-          <p>Roughly 90% of users skipped the tutorial. In the same sessions, people couldn't get through the capture itself. With the tutorial skipped, nothing in the step told them what the camera wanted.</p>
-          <p>The tutorial was the only place the step was explained. That made the skip rate a completion problem.</p>
+          <h2>Stuck, then timed out</h2>
+          <p>9 of the 10 got stuck and were stopped by the time-out.</p>
+          <p>Two causes came out of the sessions. There was no tutorial before the selfie, so people didn't know what the camera would ask for. And the realtime feedback changed too fast to read, so it looked like the screen was glitching.</p>
         </div>
         <figure class="figure" style="margin:0">
           <div class="dia">
             <div class="lane"><b>Before</b>
-              <div class="flow"><div class="step">Consent</div><span class="arrow">&rarr;</span><div class="step">ID capture</div><span class="arrow">&rarr;</span><div class="step out">Tutorial<small>~90% skipped it</small></div><span class="arrow">&rarr;</span><div class="step bad">Liveness capture<small>people got stuck</small></div></div>
+              <div class="flow"><div class="step">Consent</div><span class="arrow">&rarr;</span><div class="step">ID capture</div><span class="arrow">&rarr;</span><div class="step out">Liveness capture<small>no tutorial, feedback too fast</small></div><span class="arrow">&rarr;</span><div class="step bad">Time-out<small>9 of 10 stopped here</small></div></div>
             </div>
             <div class="lane"><b>After</b>
-              <div class="flow"><div class="step">Consent</div><span class="arrow">&rarr;</span><div class="step">ID capture</div><span class="arrow">&rarr;</span><div class="step hot">Liveness capture<small>guidance happens here</small></div></div>
+              <div class="flow"><div class="step">Consent</div><span class="arrow">&rarr;</span><div class="step">ID capture</div><span class="arrow">&rarr;</span><div class="step hot">Tutorial<small>new</small></div><span class="arrow">&rarr;</span><div class="step hot">Liveness capture<small>feedback you can read</small></div></div>
             </div>
           </div>
-          <figcaption>Diagram of the eKYC flow before and after. The ~90% comes from my usability sessions.</figcaption>
+          <figcaption>Diagram of the eKYC flow before and after. The 9 of 10 comes from my usability sessions with internal users.</figcaption>
         </figure>
       </section>
       <section class="sec">
         <div class="read-w" style="display:grid; gap:14px;">
           <div class="eyebrow">Change</div>
-          <h2>Guidance inside the capture</h2>
-          <p>The instructions moved out of the tutorial and into the camera step. While the camera is on, people get realtime feedback, so they can tell what the system wants while they're doing it. Error states say how to fix the problem.</p>
+          <h2>A tutorial, and feedback you can read</h2>
+          <p>I proposed two fixes, and both are in production. A tutorial page now comes before the selfie and shows what the camera will ask for. Each realtime feedback message stays on screen longer, so people can read it before it changes.</p>
         </div>
         <div class="dia">
           <div class="split">
-            <div class="step hot">Realtime feedback<small>while the camera is on</small></div>
-            <div class="step">Error states<small>say what went wrong and how to fix it</small></div>
+            <div class="step hot">Tutorial<small>before the selfie</small></div>
+            <div class="step hot">Realtime feedback<small>held long enough to read</small></div>
           </div>
         </div>
         <div class="slots">
-          <div class="slot tall"><b>Screen to add</b><span>The old tutorial</span></div>
-          <div class="slot tall"><b>Screen to add</b><span>Capture with realtime feedback</span></div>
-          <div class="slot tall"><b>Screen to add</b><span>An error state with a fix</span></div>
+          <div class="slot tall"><b>Screen to add</b><span>The capture step before</span></div>
+          <div class="slot tall"><b>Screen to add</b><span>The new tutorial</span></div>
+          <div class="slot tall"><b>Screen to add</b><span>Capture with the slower feedback</span></div>
         </div>
       </section>
       <section class="sec read-w">
         <div class="eyebrow">Outcome</div>
-        <h2>What shipped because of the testing</h2>
-        <p>The redesigned capture step, with guidance where the work happens.</p>
-        <div class="missing"><b>Still to add</b><span>Before and after screens. I haven't measured completion rates since the change.</span></div>
+        <h2>Everyone finished in the follow-up test</h2>
+        <p>In a follow-up test, every participant read the new tutorial and the feedback, then finished the selfie.</p>
+        <div class="missing"><b>Still to add</b><span>Before and after screens. I haven't measured drop-off in production since the change.</span></div>
       </section>
     </div></div>
     <div class="next gutter" style="--c:var(--rbac); --ci:var(--rbac-ink);"><div class="wrap"><a href="#rbac"><div><small>Next case</small><strong>Access and approvals</strong></div><span class="go" aria-hidden="true">&rarr;</span></a></div></div>
